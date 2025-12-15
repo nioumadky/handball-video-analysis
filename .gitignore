@@ -1,0 +1,15 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data lourdes
+data/raw_videos/*
+data/processed_videos/*
+data/detections/*
+
+# VS Code
+.vscode/
