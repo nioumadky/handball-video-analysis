@@ -1,18 +1,22 @@
 """
 tracking.py
-Tracking simple par distance (centroid tracking)
+Tracking par centroid avec stabilisation des IDs
 
-Attribue des IDs persistants aux détections successives.
+- tolérance aux frames manquées
+- IDs plus stables
+- adapté MVP stage
 """
 
 import math
 
 
 class CentroidTracker:
-    def __init__(self, max_distance=60):
+    def __init__(self, max_distance=60, max_missing=10):
         self.next_id = 0
-        self.objects = {}  # id -> (cx, cy)
+        self.objects = {}         # id -> (cx, cy)
+        self.missing = {}         # id -> nb de frames manquées
         self.max_distance = max_distance
+        self.max_missing = max_missing
 
     def _distance(self, p1, p2):
         return math.hypot(p1[0] - p2[0], p1[1] - p2[1])
@@ -23,20 +27,24 @@ class CentroidTracker:
         returns: dict id -> (x, y, w, h)
         """
 
-        updated_objects = {}
+        updated = {}
+        used_ids = set()
 
-        # Calcul des centres des détections
+        # Calcul centres
         centers = [
             (x + w // 2, y + h // 2, (x, y, w, h))
             for (x, y, w, h) in detections
         ]
 
-        # Associer aux objets existants
+        # Association détections ↔ objets existants
         for cx, cy, bbox in centers:
             best_id = None
             best_dist = float("inf")
 
             for obj_id, (ox, oy) in self.objects.items():
+                if obj_id in used_ids:
+                    continue
+
                 d = self._distance((cx, cy), (ox, oy))
                 if d < best_dist and d < self.max_distance:
                     best_dist = d
@@ -45,13 +53,21 @@ class CentroidTracker:
             if best_id is None:
                 best_id = self.next_id
                 self.next_id += 1
+                self.objects[best_id] = (cx, cy)
+                self.missing[best_id] = 0
+            else:
+                self.objects[best_id] = (cx, cy)
+                self.missing[best_id] = 0
 
-            updated_objects[best_id] = (cx, cy)
-            self.objects[best_id] = (cx, cy)
+            used_ids.add(best_id)
+            updated[best_id] = bbox
 
-        return {
-            obj_id: bbox
-            for obj_id, (_, _, bbox) in zip(
-                updated_objects.keys(), centers
-            )
-        }
+        # Gestion des objets manqués
+        for obj_id in list(self.objects.keys()):
+            if obj_id not in used_ids:
+                self.missing[obj_id] += 1
+                if self.missing[obj_id] > self.max_missing:
+                    del self.objects[obj_id]
+                    del self.missing[obj_id]
+
+        return updated
