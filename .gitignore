@@ -10,6 +10,7 @@ __pycache__/
 data/raw/
 data/processed/
 data/results/
+venv/
 
 
 # VS Code
