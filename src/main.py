@@ -1,19 +1,20 @@
 """
 main.py
-Point d'entrée du projet d'analyse vidéo handball (MVP stage)
+Point d’entrée du projet d’analyse vidéo handball (MVP stage)
 
 Pipeline actuel :
 - Chargement vidéo
-- Lecture frame par frame
-- Affichage vidéo (validation pipeline)
-
-Les étapes IA (détection, tracking, events) seront ajoutées progressivement.
+- Détection des joueurs
+- Tracking des joueurs (IDs persistants)
+- Visualisation
 """
 
 from pathlib import Path
 import cv2
 
 from video.video_loader import load_video
+from detection.player_detector import PlayerDetector
+from detection.tracking import CentroidTracker
 
 
 def main():
@@ -29,6 +30,9 @@ def main():
     # -------- Chargement vidéo --------
     cap = load_video(video_path)
 
+    detector = PlayerDetector()
+    tracker = CentroidTracker(max_distance=60)
+
     print("[INFO] Vidéo chargée avec succès.")
     print("[INFO] Appuie sur 'q' pour quitter.")
 
@@ -38,7 +42,24 @@ def main():
         if not ret:
             break
 
-        # (Plus tard : détection joueurs ici)
+        # 1️⃣ Détection joueurs
+        detections = detector.detect(frame)
+
+        # 2️⃣ Tracking joueurs (IDs)
+        tracked_objects = tracker.update(detections)
+
+        # 3️⃣ Visualisation
+        for obj_id, (x, y, w, h) in tracked_objects.items():
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            cv2.putText(
+                frame,
+                f"ID {obj_id}",
+                (x, y - 10),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 255, 0),
+                2
+            )
 
         cv2.imshow("Handball Video Analysis - MVP", frame)
 
