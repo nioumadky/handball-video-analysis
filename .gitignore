@@ -7,9 +7,10 @@ __pycache__/
 .ipynb_checkpoints/
 
 # Data lourdes
-data/raw_videos/*
-data/processed_videos/*
-data/detections/*
+data/raw/
+data/processed/
+data/results/
+
 
 # VS Code
 .vscode/
