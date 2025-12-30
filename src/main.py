@@ -10,6 +10,7 @@ Pipeline actuel :
 - Calcul de la vitesse
 - Interface de lecture vidéo (play/pause + barre de progression)
 - Détection des tirs (V1)
+- Filtrage des doublons de tirs
 """
 
 from pathlib import Path
@@ -46,16 +47,20 @@ def main():
     trajectories = defaultdict(list)
     prev_positions = {}
     prev_speeds = {}
-    shot_candidates = {}
-    shots_detected = []
+
+    shot_candidates = {}      # obj_id -> frame du pic
+    shots_detected = []       # liste des tirs validés
+    last_shot_frame = {}      # obj_id -> dernier tir (anti-doublon)
 
     MAX_TRAJECTORY_LENGTH = 40
 
     # -------- Paramètres tirs (MVP) --------
     SHOOTING_ZONE_X_MIN = int(frame_width * 0.6)
+
     SPEED_SHOT_THRESHOLD = 10.0
     SPEED_DROP_THRESHOLD = 5.0
     SHOT_WINDOW_FRAMES = 10
+    SHOT_COOLDOWN_FRAMES = 30  # anti-doublon (~1s)
 
     # -------- Lecture vidéo --------
     paused = False
@@ -101,7 +106,7 @@ def main():
             cx = x + w // 2
             cy = y + h // 2
 
-            # --- Vitesse ---
+            # --- Calcul vitesse ---
             if obj_id in prev_positions:
                 px, py = prev_positions[obj_id]
                 speed = math.hypot(cx - px, cy - py)
@@ -110,31 +115,35 @@ def main():
 
             prev_positions[obj_id] = (cx, cy)
 
-            # -------- Détection du tir (V1 temporelle) --------
+            # -------- Détection du tir (V1 + anti-doublon) --------
             in_shooting_zone = cx > SHOOTING_ZONE_X_MIN
 
             # 1️⃣ Pic de vitesse
             if in_shooting_zone and speed > SPEED_SHOT_THRESHOLD:
                 shot_candidates[obj_id] = current_frame_idx
 
-            # 2️⃣ Chute après le pic
+            # 2️⃣ Chute après le pic → validation
             if (
                 obj_id in shot_candidates and
                 current_frame_idx - shot_candidates[obj_id] <= SHOT_WINDOW_FRAMES and
                 speed < SPEED_DROP_THRESHOLD
             ):
-                shots_detected.append((obj_id, current_frame_idx))
-                del shot_candidates[obj_id]
+                last_frame = last_shot_frame.get(obj_id, -9999)
+                if current_frame_idx - last_frame > SHOT_COOLDOWN_FRAMES:
+                    shots_detected.append((obj_id, current_frame_idx))
+                    last_shot_frame[obj_id] = current_frame_idx
 
-                cv2.putText(
-                    frame,
-                    "SHOT",
-                    (x, y - 30),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.9,
-                    (0, 0, 255),
-                    3
-                )
+                    cv2.putText(
+                        frame,
+                        "SHOT",
+                        (x, y - 30),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.9,
+                        (0, 0, 255),
+                        3
+                    )
+
+                del shot_candidates[obj_id]
 
             prev_speeds[obj_id] = speed
 
@@ -162,7 +171,7 @@ def main():
             for i in range(1, len(points)):
                 cv2.line(frame, points[i - 1], points[i], (255, 0, 0), 2)
 
-        # Compteur de tirs
+        # Compteur tirs
         cv2.putText(
             frame,
             f"Tirs detectes : {len(shots_detected)}",
