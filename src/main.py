@@ -7,7 +7,9 @@ Pipeline actuel :
 - Détection des joueurs
 - Tracking des joueurs (IDs persistants)
 - Trajectoires
-- Calcul de la vitesse (préparation détection tirs)
+- Calcul de la vitesse
+- Interface de lecture vidéo (play/pause + barre de progression)
+- Détection des tirs (V1)
 """
 
 from pathlib import Path
@@ -33,22 +35,60 @@ def main():
     # -------- Chargement vidéo --------
     cap = load_video(video_path)
 
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+
     detector = PlayerDetector()
     tracker = CentroidTracker(max_distance=60, max_missing=10)
 
-    # Trajectoires et vitesses
+    # -------- Tracking & analyse --------
     trajectories = defaultdict(list)
     prev_positions = {}
+    prev_speeds = {}
+    shot_candidates = {}
+    shots_detected = []
+
     MAX_TRAJECTORY_LENGTH = 40
 
+    # -------- Paramètres tirs (MVP) --------
+    SHOOTING_ZONE_X_MIN = int(frame_width * 0.6)
+    SPEED_SHOT_THRESHOLD = 10.0
+    SPEED_DROP_THRESHOLD = 5.0
+    SHOT_WINDOW_FRAMES = 10
+
+    # -------- Lecture vidéo --------
+    paused = False
+    current_frame_idx = 0
+
+    WINDOW_NAME = "Handball Video Analysis - MVP"
+    cv2.namedWindow(WINDOW_NAME)
+
+    def on_trackbar(val):
+        nonlocal current_frame_idx
+        current_frame_idx = val
+        cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame_idx)
+
+    cv2.createTrackbar(
+        "Progress",
+        WINDOW_NAME,
+        0,
+        total_frames - 1,
+        on_trackbar
+    )
+
     print("[INFO] Vidéo chargée avec succès.")
-    print("[INFO] Appuie sur 'q' pour quitter.")
+    print("[INFO] Play/Pause : p | Quitter : q")
 
     # -------- Boucle principale --------
     while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
+        if not paused:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            current_frame_idx += 1
+            cv2.setTrackbarPos("Progress", WINDOW_NAME, current_frame_idx)
 
         # 1️⃣ Détection joueurs
         detections = detector.detect(frame)
@@ -56,7 +96,7 @@ def main():
         # 2️⃣ Tracking joueurs (IDs)
         tracked_objects = tracker.update(detections)
 
-        # 3️⃣ Visualisation + vitesse + trajectoires
+        # 3️⃣ Analyse par joueur
         for obj_id, (x, y, w, h) in tracked_objects.items():
             cx = x + w // 2
             cy = y + h // 2
@@ -70,6 +110,34 @@ def main():
 
             prev_positions[obj_id] = (cx, cy)
 
+            # -------- Détection du tir (V1 temporelle) --------
+            in_shooting_zone = cx > SHOOTING_ZONE_X_MIN
+
+            # 1️⃣ Pic de vitesse
+            if in_shooting_zone and speed > SPEED_SHOT_THRESHOLD:
+                shot_candidates[obj_id] = current_frame_idx
+
+            # 2️⃣ Chute après le pic
+            if (
+                obj_id in shot_candidates and
+                current_frame_idx - shot_candidates[obj_id] <= SHOT_WINDOW_FRAMES and
+                speed < SPEED_DROP_THRESHOLD
+            ):
+                shots_detected.append((obj_id, current_frame_idx))
+                del shot_candidates[obj_id]
+
+                cv2.putText(
+                    frame,
+                    "SHOT",
+                    (x, y - 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.9,
+                    (0, 0, 255),
+                    3
+                )
+
+            prev_speeds[obj_id] = speed
+
             # --- Trajectoire ---
             trajectories[obj_id].append((cx, cy))
             if len(trajectories[obj_id]) > MAX_TRAJECTORY_LENGTH:
@@ -78,10 +146,10 @@ def main():
             # Bounding box
             cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-            # ID
+            # ID + vitesse
             cv2.putText(
                 frame,
-                f"ID {obj_id}",
+                f"ID {obj_id} v={speed:.1f}",
                 (x, y - 10),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
@@ -89,32 +157,29 @@ def main():
                 2
             )
 
-            # Vitesse (debug)
-            cv2.putText(
-                frame,
-                f"v={speed:.1f}",
-                (x, y + h + 15),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (0, 0, 255),
-                1
-            )
-
             # Trajectoire
             points = trajectories[obj_id]
             for i in range(1, len(points)):
-                cv2.line(
-                    frame,
-                    points[i - 1],
-                    points[i],
-                    (255, 0, 0),
-                    2
-                )
+                cv2.line(frame, points[i - 1], points[i], (255, 0, 0), 2)
 
-        cv2.imshow("Handball Video Analysis - MVP", frame)
+        # Compteur de tirs
+        cv2.putText(
+            frame,
+            f"Tirs detectes : {len(shots_detected)}",
+            (20, 40),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (0, 0, 255),
+            2
+        )
 
-        if cv2.waitKey(1) & 0xFF == ord("q"):
+        cv2.imshow(WINDOW_NAME, frame)
+
+        key = cv2.waitKey(int(1000 / fps)) & 0xFF
+        if key == ord("q"):
             break
+        elif key == ord("p"):
+            paused = not paused
 
     # -------- Nettoyage --------
     cap.release()
